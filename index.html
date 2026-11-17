@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sistema de Correção - Escola Estadual São Tomaz de Aquino</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- jsPDF para geração de relatórios -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans antialiased">
+
+  <!-- TELA DE LOGIN / AUTENTICAÇÃO -->
+  <div id="auth-container" class="min-h-screen flex items-center justify-center p-4 bg-gray-100">
+    <div class="bg-white p-6 rounded-xl shadow-md w-full max-w-sm">
+      <h2 class="text-xl font-bold text-center text-blue-900 mb-4">Acesso ao Sistema</h2>
+      <div id="login-form">
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700 mb-1">E-mail</label>
+          <input type="email5" id="login-email" class="w-full border rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" placeholder="seu-email@exemplo.com">
+        </div>
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700 mb-1">Senha</label>
+          <input type="password" id="login-senha" class="w-full border rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Sua senha">
+        </div>
+        <button onclick="fazerLogin()" class="w-full bg-blue-600 text-white p-2 rounded-lg font-semibold hover:bg-blue-700 transition">Entrar</button>
+        <p id="auth-erro" class="text-red-500 text-xs mt-3 text-center hidden"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- APLICAÇÃO PRINCIPAL (Oculta até o login) -->
+  <div id="app-container" class="hidden min-h-screen pb-12">
+    <header class="bg-blue-900 text-white p-4 shadow flex justify-between items-center">
+      <h1 class="font-bold text-lg">São Tomaz de Aquino</h1>
+      <button onclick="fazerLogout()" class="text-xs bg-red-600 px-3 py-1.5 rounded font-medium hover:bg-red-700 transition">Sair</button>
+    </header>
+
+    <main class="p-4 max-w-4xl mx-auto space-y-6">
+      <!-- Seção de Provas e Relatórios -->
+      <div class="bg-white p-4 rounded-xl shadow">
+        <h2 class="text-md font-bold text-blue-900 mb-3">Relatório de Notas</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Prova</label>
+            <select id="relatorio-prova-select" onchange="renderRelatorioNotas()" class="w-full border rounded-lg p-2 text-sm">
+              <option value="">Selecione a Prova</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Turma</label>
+            <select id="relatorio-turma-select" onchange="renderRelatorioNotas()" class="w-full border rounded-lg p-2 text-sm">
+              <option value="">Selecione a Turma</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="flex justify-between items-center mt-2 mb-2">
+          <div>
+            <span id="relatorio-header-turma" class="text-xs font-semibold text-gray-600 block">Turma: -</span>
+            <span id="relatorio-header-prova" class="text-xs font-semibold text-gray-600 block">Avaliação: -</span>
+          </div>
+          <button onclick="gerarPDFPlanilhaNotas()" class="bg-green-600 text-white text-xs px-3 py-1.5 rounded font-medium hover:bg-green-700 transition">Baixar PDF</button>
+        </div>
+
+        <div id="tabela-notas-container" class="overflow-x-auto border rounded-lg mt-2">
+          <p class="text-center text-gray-400 py-4 text-sm">Selecione uma prova e uma turma para ver as notas.</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- FIREBASE E LÓGICA DO SISTEMA -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js";
+    import { getFirestore, collection, getDocs, addDoc, query, where } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
+
+    // Configuração oficial do Firebase obtida do console
+    const firebaseConfig = {
+      apiKey: "AIzaSyCReb5DPZZUs9WQXfTyiDYAW5FuWvdIwos",
+      authDomain: "sistemadecorrecao-99336.firebaseapp.com",
+      projectId: "sistemadecorrecao-99336",
+      storageBucket: "sistemadecorrecao-99336.firebasestorage.app",
+      messagingSenderId: "368037327036",
+      appId: "1:368037327036:web:107e098372442a8e9060b9"
+    };
+
+    // Inicializar Firebase
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    // Variáveis globais do sistema
+    window.provasSalvas = [];
+    window.resultadosSalvos = [];
+
+    // Monitorar estado de login do usuário
+    onAuthStateChanged(auth, (user) => {
+      const authContainer = document.getElementById('auth-container');
+      const appContainer = document.getElementById('app-container');
+
+      if (user) {
+        // Usuário logado: esconde tela de login e mostra o app
+        authContainer.classList.add('hidden');
+        appContainer.classList.remove('hidden');
+        carregarDadosDoFirebase();
+      } else {
+        // Usuário deslogado: mostra tela de login e oculta o app
+        authContainer.classList.remove('hidden');
+        appContainer.classList.add('hidden');
+      }
+    });
+
+    // Função de Login
+    window.fazerLogin = async function() {
+      const email = document.getElementById('login-email').value.trim();
+      const senha = document.getElementById('login-senha').value;
+      const erroEl = document.getElementById('auth-erro');
+
+      erroEl.classList.add('hidden');
+
+      if (!email || !senha) {
+        erroEl.innerText = "Preencha o e-mail e a senha.";
+        erroEl.classList.remove('hidden');
+        return;
+      }
+
+      try {
+        await signInWithEmailAndPassword(auth, email, senha);
+      } catch (error) {
+        erroEl.innerText = "E-mail ou senha incorretos.";
+        erroEl.classList.remove('hidden');
+      }
+    };
+
+    // Função de Logout
+    window.fazerLogout = async function() {
+      try {
+        await signOut(auth);
+      } catch (error) {
+        console.error("Erro ao sair:", error);
+      }
+    };
+
+    // Carregar Provas e Resultados do Firestore
+    async function carregarDadosDoFirebase() {
+      try {
+        // Carregar Provas
+        const queryProvas = await getDocs(collection(db, "provas"));
+        window.provasSalvas = [];
+        queryProvas.forEach((doc) => {
+          window.provasSalvas.push({ id: doc.id, ...doc.data() });
+        });
+
+        // Carregar Resultados
+        const queryResultados = await getDocs(collection(db, "resultados"));
+        window.resultadosSalvos = [];
+        queryResultados.forEach((doc) => {
+          window.resultadosSalvos.push({ id: doc.id, ...doc.data() });
+        });
+
+        atualizarFiltrosRelatorio();
+      } catch (error) {
+        console.error("Erro ao carregar dados do banco:", error);
+      }
+    }
+
+    function atualizarFiltrosRelatorio() {
+      const selProva = document.getElementById('relatorio-prova-select');
+      const selTurma = document.getElementById('relatorio-turma-select');
+
+      if (!selProva || !selTurma) return;
+
+      selProva.innerHTML = '<option value="">Selecione a Prova</option>';
+      selTurma.innerHTML = '<option value="">Selecione a Turma</option>';
+
+      let turmasUnicas = [];
+      window.provasSalvas.forEach(p => {
+        selProva.innerHTML += `<option value="${p.id}">${p.nome}</option>`;
+        if (p.turma && !turmasUnicas.includes(p.turma)) turmasUnicas.push(p.turma);
+      });
+
+      turmasUnicas.forEach(t => {
+        selTurma.innerHTML += `<option value="${t}">${t}</option>`;
+      });
+    }
+
+    window.renderRelatorioNotas = function() {
+      const idProva = document.getElementById('relatorio-prova-select').value;
+      const turma = document.getElementById('relatorio-turma-select').value;
+      const container = document.getElementById('tabela-notas-container');
+
+      if (!idProva || !turma) {
+        container.innerHTML = `<p class="text-center text-gray-400 py-4 text-sm">Selecione uma prova e uma turma para ver as notas.</p>`;
+        return;
+      }
+
+      const prova = window.provasSalvas.find(p => p.id === idProva);
+      const resultadosFiltrados = window.resultadosSalvos.filter(r => r.idProva === idProva && r.turma === turma);
+
+      document.getElementById('relatorio-header-turma').innerText = `Turma: ${turma}`;
+      document.getElementById('relatorio-header-prova').innerText = `Avaliação: ${prova ? prova.nome : '-'}`;
+
+      if (resultadosFiltrados.length === 0) {
+        container.innerHTML = `<p class="text-center text-gray-400 py-4 text-sm">Nenhum resultado corrigido para esta turma ainda.</p>`;
+        return;
+      }
+
+      let html = `<table class="w-full text-left text-sm border-collapse"><thead><tr class="bg-gray-100 border-b"><th class="p-2 border">Aluno</th><th class="p-2 border text-center">Acertos</th><th class="p-2 border text-center">Nota</th></tr></thead><tbody>`;
+      resultadosFiltrados.forEach(res => {
+        html += `<tr class="border-b"><td class="p-2 border">${res.aluno}</td><td class="p-2 border text-center">${res.acertos}/${res.total}</td><td class="p-2 border text-center font-bold text-blue-900">${res.nota}</td></tr>`;
+      });
+      html += `</tbody></table>`;
+      container.innerHTML = html;
+    };
+
+    window.gerarPDFPlanilhaNotas = function() {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+      doc.text("Escola Estadual São Tomaz de Aquino - Relatório de Notas", 14, 20);
+      doc.save("planilha-notas.pdf");
+    };
+  </script>
+</body>
+</html>
